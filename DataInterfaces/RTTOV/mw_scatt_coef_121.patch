@@ -1,0 +1,1205 @@
+diff -Naur mw_scatt_coef_121/arts_scat.F90 mw_scatt_coef_new/arts_scat.F90
+--- mw_scatt_coef_121/arts_scat.F90	1970-01-01 01:00:00.000000000 +0100
++++ mw_scatt_coef_new/arts_scat.F90	2017-11-06 09:04:49.865417869 +0100
+@@ -0,0 +1,175 @@
++subroutine arts_scat (f_ghz, temp, Dinmeters, &
++                      ssp_arts, f_arts, T_arts, D_arts, &
++                      q_ext, q_sct, q_asm, q_bsct)
++
++! Copyright:
++!
++!    Copyright 2017, Chalmers University of Technology/EUMETSAT, All Rights Reserved.
++
++! All interpolations done here are linear.
++
++! History:
++! Version   Date        Comment
++! -------   ----        -------
++!           31/10/2017  initial version (Jana Mendrok)
++
++use parkind1, only: jprb, jprm, jpim
++use mod_arts, only: nf_max_arts, nT_max_arts, nD_max_arts, f_extpol, T_extpol, D_extpol
++
++implicit none
++
++real (kind=jprb), intent (in   ) :: f_ghz, temp, Dinmeters        ! [GHz, K, m] 
++real (kind=jprb), intent (in   ) :: ssp_arts(nf_max_arts, nT_max_arts, nD_max_arts,4)
++real (kind=jprb), intent (in   ) :: f_arts(0:nf_max_arts), T_arts(0:nT_max_arts), D_arts(0:nD_max_arts) ! [Hz, K, m]
++real (kind=jprb), intent (  out) :: q_ext, q_sct, q_asm, q_bsct   ! [cm^2]
++
++
++! Local variables
++real    (kind=jprm) :: f_hz, fw, Tw, Dw, fw1, Tw1, Dw1, rtmp
++integer (kind=jpim) :: nf, nT, nD, fi, Ti, Di, i
++character(len=*), parameter :: err_base = 'Aborting due to problem in ARTS SSP database: '
++
++f_hz = f_ghz*1e9_JPRB ! [Hz]
++
++nf = INT(f_arts(0))
++nT = INT(T_arts(0))
++nD = INT(D_arts(0))
++
++! JM: 
++! It seems more appropriate to do the f&T finding outside the D-loop (maybe even
++! up in those loops already. i could re-define the rssp format (and rewrite the
++! rssp reading routine) such that passed sub-arrays are contigious...). unless
++! a similar loading/caching proedure as for liu is implemented (not by me,
++! though.)
++
++! find freq interpolation bounds. allow some extrapolation.
++rtmp = (1.+f_extpol)*f_arts(1) - f_extpol*f_arts(2)
++if (f_hz<rtmp) then
++  write(*,*) err_base
++  write(*,'(2(A,F5.1,A))') &
++    'Lowest frequency given for current habit is ', &
++    f_arts(1)/1e9_JPRB, 'GHz.\n', &
++    'Extrapolation set to be allowed at maximum down to ', &
++    rtmp/1e9_JPRB, 'GHz.'
++  stop
++endif
++
++rtmp = (1.+f_extpol)*f_arts(nf) - f_extpol*f_arts(nf-1)
++if (f_hz>rtmp) then
++  write (*,*) 'hit upper freq bound.'
++  write(*,*) err_base
++  write(*,'(2(A,F5.1,A))') &
++    'Highest frequency given for current habit is ', &
++    f_arts(nf)/1e9_JPRB, 'GHz.\n', &
++    'Extrapolation set to be allowed at maximum up to ', &
++    rtmp/1e9_JPRB, 'GHz.'
++  stop
++endif
++
++fi = 1
++do while ( (fi<nf-1) .and. (f_arts(fi+1)<f_hz) )
++  fi = fi+1
++enddo
++
++
++! find temp interpolation bounds. allow some extrapolation.
++rtmp = (1.+T_extpol)*T_arts(1) - T_extpol*T_arts(2)
++if (temp<rtmp) then
++  write(*,*) err_base
++  write(*,'(2(A,F5.1,A))') &
++    'Lowest temperature given for current habit is ', &
++    T_arts(1), 'K.\n', &
++    'Extrapolation set to be allowed at maximum down to ', &
++    rtmp, 'K.'
++  stop
++endif
++
++rtmp = (1.+T_extpol)*T_arts(nT) - T_extpol*T_arts(nT-1)
++if (temp>rtmp) then
++  write(*,*) err_base
++  write(*,'(2(A,F5.1,A))') &
++    'Highest temperature given for current habit is ', &
++    T_arts(nT), 'K.\n', &
++    'Extrapolation set to be allowed at maximum up to ', &
++    rtmp, 'K.'
++  stop
++endif
++
++Ti = 1
++do while ( (Ti<nT-1) .and. (T_arts(Ti+1)<temp) )
++  Ti = Ti+1
++enddo
++
++
++! find size interpolation bounds
++rtmp = (1.+D_extpol)*D_arts(1) - D_extpol*D_arts(2)
++if (Dinmeters<rtmp) then
++  write(*,*) err_base
++  write(*,'(2(A,F5.1,A))') &
++    'Smallest maximum diameters given for current habit is ', &
++    D_arts(1)*1e2_JPRB, 'cm.\n', &
++    'Extrapolation set to be allowed at maximum down to ', &
++    rtmp*1e2_JPRB, 'cm.'
++  stop
++endif
++
++rtmp = (1.+D_extpol)*D_arts(nD) - D_extpol*D_arts(nD-1)
++if (Dinmeters>rtmp) then
++  write(*,*) err_base
++  write(*,'(2(A,F5.1,A))') &
++    'Largest maximum diameters given for current habit is ', &
++    D_arts(nD)*1e2_JPRB, 'cm.\n', &
++    'Extrapolation set to be allowed at maximum up to ', &
++    rtmp*1e2_JPRB, 'cm.'
++  stop
++endif
++
++Di = 1
++do while ( (Di<nD-1) .and. (D_arts(Di+1)<Dinmeters) )
++  Di = Di+1
++enddo
++
++
++! Determine weights
++fw = (f_arts(fi+1)-f_hz)      / (f_arts(fi+1)-f_arts(fi))
++Tw = (T_arts(Ti+1)-temp)      / (T_arts(Ti+1)-T_arts(Ti))
++Dw = (D_arts(Di+1)-Dinmeters) / (D_arts(Di+1)-D_arts(Di))
++fw1 = 1.-fw
++Tw1 = 1.-Tw
++Dw1 = 1.-Dw
++
++! Do the interpolation
++q_ext = (ssp_arts(fi,  Ti,  Di,  1)*fw *Tw *Dw  + &
++         ssp_arts(fi,  Ti,  Di+1,1)*fw *Tw *Dw1 + &
++         ssp_arts(fi,  Ti+1,Di,  1)*fw *Tw1*Dw  + &
++         ssp_arts(fi,  Ti+1,Di+1,1)*fw *Tw1*Dw1 + &
++         ssp_arts(fi+1,Ti,  Di,  1)*fw1*Tw *Dw  + &
++         ssp_arts(fi+1,Ti,  Di+1,1)*fw1*Tw *Dw1 + &
++         ssp_arts(fi+1,Ti+1,Di,  1)*fw1*Tw1*Dw  + &
++         ssp_arts(fi+1,Ti+1,Di+1,1)*fw1*Tw1*Dw1) *1e4_JPRB ! [m2] -> [cm2] conversion
++q_sct = (ssp_arts(fi,  Ti,  Di,  2)*fw *Tw *Dw  + &
++         ssp_arts(fi,  Ti,  Di+1,2)*fw *Tw *Dw1 + &
++         ssp_arts(fi,  Ti+1,Di,  2)*fw *Tw1*Dw  + &
++         ssp_arts(fi,  Ti+1,Di+1,2)*fw *Tw1*Dw1 + &
++         ssp_arts(fi+1,Ti,  Di,  2)*fw1*Tw *Dw  + &
++         ssp_arts(fi+1,Ti,  Di+1,2)*fw1*Tw *Dw1 + &
++         ssp_arts(fi+1,Ti+1,Di,  2)*fw1*Tw1*Dw  + &
++         ssp_arts(fi+1,Ti+1,Di+1,2)*fw1*Tw1*Dw1) *1e4_JPRB ! [m2] -> [cm2] conversion
++q_asm =  ssp_arts(fi,  Ti,  Di,  3)*fw *Tw *Dw  + &
++         ssp_arts(fi,  Ti,  Di+1,3)*fw *Tw *Dw1 + &
++         ssp_arts(fi,  Ti+1,Di,  3)*fw *Tw1*Dw  + &
++         ssp_arts(fi,  Ti+1,Di+1,3)*fw *Tw1*Dw1 + &
++         ssp_arts(fi+1,Ti,  Di,  3)*fw1*Tw *Dw  + &
++         ssp_arts(fi+1,Ti,  Di+1,3)*fw1*Tw *Dw1 + &
++         ssp_arts(fi+1,Ti+1,Di,  3)*fw1*Tw1*Dw  + &
++         ssp_arts(fi+1,Ti+1,Di+1,3)*fw1*Tw1*Dw1
++q_bsct= (ssp_arts(fi,  Ti,  Di,  4)*fw *Tw *Dw  + &
++         ssp_arts(fi,  Ti,  Di+1,4)*fw *Tw *Dw1 + &
++         ssp_arts(fi,  Ti+1,Di,  4)*fw *Tw1*Dw  + &
++         ssp_arts(fi,  Ti+1,Di+1,4)*fw *Tw1*Dw1 + &
++         ssp_arts(fi+1,Ti,  Di,  4)*fw1*Tw *Dw  + &
++         ssp_arts(fi+1,Ti,  Di+1,4)*fw1*Tw *Dw1 + &
++         ssp_arts(fi+1,Ti+1,Di,  4)*fw1*Tw1*Dw  + &
++         ssp_arts(fi+1,Ti+1,Di+1,4)*fw1*Tw1*Dw1) *1e4_JPRB ! [m2] -> [cm2] conversion
++
++end subroutine arts_scat
+diff -Naur mw_scatt_coef_121/channels.dat mw_scatt_coef_new/channels.dat
+--- mw_scatt_coef_121/channels.dat	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/channels.dat	2017-10-31 22:59:21.008586275 +0100
+@@ -12,7 +12,9 @@
+ F      ! (T/F) - use melting layer of Bauer (2001)    
+ F      ! (T/F) - In Marshall-Palmer PSD, use n0 vs T from Panegrossi et al. (1998), appendix
+        ! The following properties are specified per hydrometeor:
+-       ! (A) - Mie sphere or DDA? 0-10 uses DDA shape from Liu (2008,see scatdb.c); -1 uses a Mie sphere: 
++       ! (A1) - Scattering properties from (1) Mie sphere; (2) Liu (2008,see scatdb.c); (3) ARTS SSP-DB
++ 1  2  1  1  1
++       ! (A2) - Particle shape: irrelevant if Mie sphere; Liu shapes from 0-10; ARTS-DB habit ID (see mod_arts.F90)
+ -1  9 -1 -1 -1
+        ! (B) - Density: (1) 0.132*D-1 (Wilson & Ballard, 1999) (2) 8.74E-4*exp(-0.625D2) + 4.5E-5 (Jones, 1995) 
+        ! (3) 0.035*D-1.1 (Brown & Francis, 1995) (4) Constant density as defined in mod_mie.F90
+diff -Naur mw_scatt_coef_121/channels.dat_all mw_scatt_coef_new/channels.dat_all
+--- mw_scatt_coef_121/channels.dat_all	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/channels.dat_all	2017-10-31 22:59:56.033331065 +0100
+@@ -12,7 +12,9 @@
+ F      ! (T/F) - use melting layer of Bauer (2001)    
+ F      ! (T/F) - In Marshall-Palmer PSD, use n0 vs T from Panegrossi et al. (1998), appendix
+        ! The following properties are specified per hydrometeor:
+-       ! (A) - Mie sphere or DDA? 0-10 uses DDA shape from Liu (2008,see scatdb.c); -1 uses a Mie sphere: 
++       ! (A1) - Scattering properties from (1) Mie sphere; (2) Liu (2008,see scatdb.c); (3) ARTS SSP-DB
++ 1  2  1  1  1
++       ! (A2) - Particle shape: irrelevant if Mie sphere; Liu shapes from 0-10; ARTS-DB habit ID (see mod_arts.F90)
+ -1  9 -1 -1 -1
+        ! (B) - Density: (1) 0.132*D-1 (Wilson & Ballard, 1999) (2) 8.74E-4*exp(-0.625D2) + 4.5E-5 (Jones, 1995) 
+        ! (3) 0.035*D-1.1 (Brown & Francis, 1995) (4) Constant density as defined in mod_mie.F90
+diff -Naur mw_scatt_coef_121/channels.dat_amsua mw_scatt_coef_new/channels.dat_amsua
+--- mw_scatt_coef_121/channels.dat_amsua	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/channels.dat_amsua	2017-10-31 22:22:18.000000000 +0100
+@@ -12,7 +12,9 @@
+ F      ! (T/F) - use melting layer of Bauer (2001)    
+ F      ! (T/F) - In Marshall-Palmer PSD, use n0 vs T from Panegrossi et al. (1998), appendix
+        ! The following properties are specified per hydrometeor:
+-       ! (A) - Mie sphere or DDA? 0-10 uses DDA shape from Liu (2008,see scatdb.c); -1 uses a Mie sphere: 
++       ! (A1) - Scattering properties from (1) Mie sphere; (2) Liu (2008,see scatdb.c); (3) ARTS SSP-DB
++ 1  2  1  1  1
++       ! (A2) - Particle shape: irrelevant if Mie sphere; Liu shapes from 0-10; ARTS-DB habit ID (see mod_arts.F90)
+ -1  9 -1 -1 -1
+        ! (B) - Density: (1) 0.132*D-1 (Wilson & Ballard, 1999) (2) 8.74E-4*exp(-0.625D2) + 4.5E-5 (Jones, 1995) 
+        ! (3) 0.035*D-1.1 (Brown & Francis, 1995) (4) Constant density as defined in mod_mie.F90
+diff -Naur mw_scatt_coef_121/channels.dat_atovs mw_scatt_coef_new/channels.dat_atovs
+--- mw_scatt_coef_121/channels.dat_atovs	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/channels.dat_atovs	2017-10-31 22:22:28.000000000 +0100
+@@ -12,7 +12,9 @@
+ F      ! (T/F) - use melting layer of Bauer (2001)    
+ F      ! (T/F) - In Marshall-Palmer PSD, use n0 vs T from Panegrossi et al. (1998), appendix
+        ! The following properties are specified per hydrometeor:
+-       ! (A) - Mie sphere or DDA? 0-10 uses DDA shape from Liu (2008,see scatdb.c); -1 uses a Mie sphere: 
++       ! (A1) - Scattering properties from (1) Mie sphere; (2) Liu (2008,see scatdb.c); (3) ARTS SSP-DB
++ 1  2  1  1  1
++       ! (A2) - Particle shape: irrelevant if Mie sphere; Liu shapes from 0-10; ARTS-DB habit ID (see mod_arts.F90)
+ -1  9 -1 -1 -1
+        ! (B) - Density: (1) 0.132*D-1 (Wilson & Ballard, 1999) (2) 8.74E-4*exp(-0.625D2) + 4.5E-5 (Jones, 1995) 
+        ! (3) 0.035*D-1.1 (Brown & Francis, 1995) (4) Constant density as defined in mod_mie.F90
+diff -Naur mw_scatt_coef_121/channels.dat_debug mw_scatt_coef_new/channels.dat_debug
+--- mw_scatt_coef_121/channels.dat_debug	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/channels.dat_debug	2017-10-31 22:22:42.000000000 +0100
+@@ -12,7 +12,9 @@
+ F      ! (T/F) - use melting layer of Bauer (2001)    
+ F      ! (T/F) - In Marshall-Palmer PSD, use n0 vs T from Panegrossi et al. (1998), appendix
+        ! The following properties are specified per hydrometeor:
+-       ! (A) - Mie sphere or DDA? 0-10 uses DDA shape from Liu (2008,see scatdb.c); -1 uses a Mie sphere: 
++       ! (A1) - Scattering properties from (1) Mie sphere; (2) Liu (2008,see scatdb.c); (3) ARTS SSP-DB
++ 1  2  1  1  1
++       ! (A2) - Particle shape: irrelevant if Mie sphere; Liu shapes from 0-10; ARTS-DB habit ID (see mod_arts.F90)
+ -1  9 -1 -1 -1
+        ! (B) - Density: (1) 0.132*D-1 (Wilson & Ballard, 1999) (2) 8.74E-4*exp(-0.625D2) + 4.5E-5 (Jones, 1995) 
+        ! (3) 0.035*D-1.1 (Brown & Francis, 1995) (4) Constant density as defined in mod_mie.F90
+diff -Naur mw_scatt_coef_121/channels.dat_mwhs2 mw_scatt_coef_new/channels.dat_mwhs2
+--- mw_scatt_coef_121/channels.dat_mwhs2	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/channels.dat_mwhs2	2017-10-31 22:23:07.000000000 +0100
+@@ -12,7 +12,9 @@
+ F      ! (T/F) - use melting layer of Bauer (2001)    
+ F      ! (T/F) - In Marshall-Palmer PSD, use n0 vs T from Panegrossi et al. (1998), appendix
+        ! The following properties are specified per hydrometeor:
+-       ! (A) - Mie sphere or DDA? 0-10 uses DDA shape from Liu (2008,see scatdb.c); -1 uses a Mie sphere: 
++       ! (A1) - Scattering properties from (1) Mie sphere; (2) Liu (2008,see scatdb.c); (3) ARTS SSP-DB
++ 1  2  1  1  1
++       ! (A2) - Particle shape: irrelevant if Mie sphere; Liu shapes from 0-10; ARTS-DB habit ID (see mod_arts.F90)
+ -1  9 -1 -1 -1
+        ! (B) - Density: (1) 0.132*D-1 (Wilson & Ballard, 1999) (2) 8.74E-4*exp(-0.625D2) + 4.5E-5 (Jones, 1995) 
+        ! (3) 0.035*D-1.1 (Brown & Francis, 1995) (4) Constant density as defined in mod_mie.F90
+diff -Naur mw_scatt_coef_121/channels.dat_mwts2 mw_scatt_coef_new/channels.dat_mwts2
+--- mw_scatt_coef_121/channels.dat_mwts2	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/channels.dat_mwts2	2017-10-31 22:23:16.000000000 +0100
+@@ -12,7 +12,9 @@
+ F      ! (T/F) - use melting layer of Bauer (2001)    
+ F      ! (T/F) - In Marshall-Palmer PSD, use n0 vs T from Panegrossi et al. (1998), appendix
+        ! The following properties are specified per hydrometeor:
+-       ! (A) - Mie sphere or DDA? 0-10 uses DDA shape from Liu (2008,see scatdb.c); -1 uses a Mie sphere: 
++       ! (A1) - Scattering properties from (1) Mie sphere; (2) Liu (2008,see scatdb.c); (3) ARTS SSP-DB
++ 1  2  1  1  1
++       ! (A2) - Particle shape: irrelevant if Mie sphere; Liu shapes from 0-10; ARTS-DB habit ID (see mod_arts.F90)
+ -1  9 -1 -1 -1
+        ! (B) - Density: (1) 0.132*D-1 (Wilson & Ballard, 1999) (2) 8.74E-4*exp(-0.625D2) + 4.5E-5 (Jones, 1995) 
+        ! (3) 0.035*D-1.1 (Brown & Francis, 1995) (4) Constant density as defined in mod_mie.F90
+diff -Naur mw_scatt_coef_121/channels.dat_smos mw_scatt_coef_new/channels.dat_smos
+--- mw_scatt_coef_121/channels.dat_smos	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/channels.dat_smos	2017-10-31 22:23:28.000000000 +0100
+@@ -12,8 +12,10 @@
+ F      ! (T/F) - use melting layer of Bauer (2001)    
+ F      ! (T/F) - In Marshall-Palmer PSD, use n0 vs T from Panegrossi et al. (1998), appendix
+        ! The following properties are specified per hydrometeor:
+-       ! (A) - Mie sphere or DDA? 0-10 uses DDA shape from Liu (2008,see scatdb.c); -1 uses a Mie sphere: 
+--1 -1 -1 -1 -1
++       ! (A1) - Scattering properties from (1) Mie sphere; (2) Liu (2008,see scatdb.c); (3) ARTS SSP-DB
++ 1  2  1  1  1
++       ! (A2) - Particle shape: irrelevant if Mie sphere; Liu shapes from 0-10; ARTS-DB habit ID (see mod_arts.F90)
++-1  9 -1 -1 -1
+        ! (B) - Density: (1) 0.132*D-1 (Wilson & Ballard, 1999) (2) 8.74E-4*exp(-0.625D2) + 4.5E-5 (Jones, 1995) 
+        ! (3) 0.035*D-1.1 (Brown & Francis, 1995) (4) Constant density as defined in mod_mie.F90
+        ! (5) Parameterization of density vs frequency from Surussavadee et al. (2006)
+diff -Naur mw_scatt_coef_121/channels.dat_ssmis mw_scatt_coef_new/channels.dat_ssmis
+--- mw_scatt_coef_121/channels.dat_ssmis	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/channels.dat_ssmis	2017-11-06 09:10:56.644785104 +0100
+@@ -12,7 +12,9 @@
+ F      ! (T/F) - use melting layer of Bauer (2001)    
+ F      ! (T/F) - In Marshall-Palmer PSD, use n0 vs T from Panegrossi et al. (1998), appendix
+        ! The following properties are specified per hydrometeor:
+-       ! (A) - Mie sphere or DDA? 0-10 uses DDA shape from Liu (2008,see scatdb.c); -1 uses a Mie sphere: 
++       ! (A1) - Scattering properties from (1) Mie sphere; (2) Liu (2008,see scatdb.c); (3) ARTS SSP-DB
++ 1  2  1  1  1
++       ! (A2) - Particle shape: irrelevant if Mie sphere; Liu shapes from 0-10; ARTS-DB habit ID (see mod_arts.F90)
+ -1  9 -1 -1 -1
+        ! (B) - Density: (1) 0.132*D-1 (Wilson & Ballard, 1999) (2) 8.74E-4*exp(-0.625D2) + 4.5E-5 (Jones, 1995) 
+        ! (3) 0.035*D-1.1 (Brown & Francis, 1995) (4) Constant density as defined in mod_mie.F90
+diff -Naur mw_scatt_coef_121/density_all.F90 mw_scatt_coef_new/density_all.F90
+--- mw_scatt_coef_121/density_all.F90	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/density_all.F90	2017-10-31 22:55:36.000000000 +0100
+@@ -1,4 +1,4 @@
+-subroutine density_all (i_type, ll_liu_dda, liu_habit, dens, f_ghz, Dinmeters, &
++subroutine density_all (i_type, i_scat, particle_shape, dens, f_ghz, Dinmeters, &
+   & density, a, b, gamma1plusb)
+ 
+ ! Copyright:
+@@ -33,18 +33,20 @@
+ ! Version   Date        Comment
+ ! -------   ----        -------
+ !           03/2013     First version (Alan Geer)
++!           31/10/2017  Adapted for ARTS-SSDB use (Jana Mendrok)
+ 
+ use parkind1, only: jprb, jpim, jplm
+ !INTF_OFF
+ use mod_mie, only:  density_liq, pi, dens_wilson_ballard_1999, dens_jones_1995, &
+- & dens_brown_francis_1995, dens_fixed, dens_ss_2006, i_clw, i_rain, not_available
++ & dens_brown_francis_1995, dens_fixed, dens_ss_2006, i_clw, i_rain, not_available, i_liu, i_arts
++use mod_arts, only: alpha_arts, beta_arts
+ !INTF_ON
+ 
+ implicit none
+ 
+ integer (kind=jpim), intent ( in) :: i_type         ! Hydrometeor type
+-logical (kind=jplm), intent ( in) :: ll_liu_dda     ! Liu DDA shapes are being used
+-integer (kind=jpim), intent ( in) :: liu_habit      ! defined in scatdb.c
++integer (kind=jpim), intent ( in) :: i_scat         ! Scattering computation type
++integer (kind=jpim), intent ( in) :: particle_shape ! particle shape (e.g. Liu DDA habit number)
+ integer (kind=jpim), intent ( in) :: dens           ! Choice of density parametrisation
+ real    (kind=jprb), intent ( in) :: f_ghz          ! Frequency, [GHz]
+ real    (kind=jprb), intent ( in), optional :: Dinmeters(:)      ! Diameter or maximum dimension [m]
+@@ -68,15 +70,20 @@
+ gamma_local = not_available
+ 
+ ! The formulae are typically in SI units, translated to g/cm3 by dividing by 1000
+-if (ll_liu_dda) then
++if ( (i_scat == i_liu) .or. (i_scat == i_arts) ) then
+ 
+-  ! Liu shapes (a,b are in SI.). See p. 27-139
+-  call liu_density(liu_habit, x, y, gamma_local)
++  if (i_scat == i_liu) then
++    ! Liu shapes (a,b are in SI.). See p. 27-139
++    call liu_density(particle_shape, x, y, gamma_local)
++  else
++    x = alpha_arts(particle_shape)
++    y = beta_arts(particle_shape)
++  endif
+ 
+   if( lDD ) then
+     do i_dia = 1, size(Dinmeters)
+ 
+-      ! The Liu coefficients are in SI, so convert dia_froz to metres
++      ! Coefficients are in SI, so convert dia_froz to metres
+       density(i_dia) = 6.0_JPRB/pi*x*(Dinmeters(i_dia))**(y-3.0_JPRB)
+ 
+     enddo 
+diff -Naur mw_scatt_coef_121/get_dia.F90 mw_scatt_coef_new/get_dia.F90
+--- mw_scatt_coef_121/get_dia.F90	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/get_dia.F90	2017-10-31 22:31:05.000000000 +0100
+@@ -1,4 +1,4 @@
+-subroutine get_dia ( dia_froz, i_type, ll_liu_dda, liu_habit)
++subroutine get_dia ( dia_froz, i_type, i_scat, particle_shape)
+ 
+ !    This software was developed within the context of
+ !    the EUMETSAT Satellite Application Facility on
+@@ -15,9 +15,8 @@
+ !
+ !    OUT: dia_froz   - particle diameter or maximum dimension [cm]
+ !    IN:  i_type     - hydrometeor type (see mod_mie.F90)   
+-!         ll_liu_dda - use Liu (2008) DDA results for snow
+-!         liu_habit  - habit for above, as defined in Liu (2008)
+-
++!         i_scat     - number indicates use of Mie, Liu (2008) DDA or other database scattering params 
++!         particle_habit  - habit for above, as defined in Liu (2008) or other database
+ 
+ ! Current Code Owner: SAF NWP
+ 
+@@ -26,18 +25,19 @@
+ ! -------   ----        -------
+ !           02/03/2010  New function (Alan Geer)
+ !           15/03/2013  Fully-flexible Liu shapes (Alan Geer)
++!           31/10/2017  Adapted for ARTS-SSDB use (Jana Mendrok). d_dia bugfix.
+ 
+ use parkind1, only: jprb, jpim, jplm
+ use mod_mie,  only: n_dia
+ !INTF_OFF
+-use mod_mie,  only: d_min, d_max, d_liu_max, d_liu_min
++use mod_mie,  only: d_min, d_max, d_liu_max, d_liu_min, i_liu, i_arts
+ !INTF_ON
++use mod_arts, only: d_arts_max, d_arts_min
+ implicit none
+ 
+ ! Interface
+ real (kind=jprb),    intent (  out) :: dia_froz(n_dia)
+-integer (kind=jpim), intent (in   ) :: i_type, liu_habit
+-logical (kind=jplm), intent (in   ) :: ll_liu_dda
++integer (kind=jpim), intent (in   ) :: i_type, i_scat, particle_shape
+ !INTF_END
+ 
+ ! Local variables
+@@ -45,17 +45,22 @@
+ real (kind=jprb)    :: d_dia_froz, d_max_use, d_min_use
+ 
+ !* size ranges (computed later in the totalice case)
+-if (ll_liu_dda) then
++if (i_scat == i_liu) then
+   ! Apply size limits appropriate to Liu shapes
+-  d_max_use = d_liu_max(liu_habit) 
+-  d_min_use = d_liu_min(liu_habit)
++  d_max_use = d_liu_max(particle_shape) 
++  d_min_use = d_liu_min(particle_shape)
++elseif (i_scat == i_arts) then
++  ! convert from SI to [cm]
++  d_max_use = d_arts_max(particle_shape)*100.0_JPRB
++  d_min_use = d_arts_min(particle_shape)*100.0_JPRB
+ else
+   d_max_use = d_max (i_type)
+   d_min_use = d_min (i_type)
+ endif
+-d_dia_froz = (d_max_use - d_min_use) / n_dia
++d_dia_froz = (d_max_use - d_min_use) / REAL(n_dia - 1)
++
+ do i_dia = 1, n_dia
+-  dia_froz (i_dia) = d_min_use + (i_dia - 1) * d_dia_froz
++  dia_froz (i_dia) = d_min_use + REAL(i_dia - 1) * d_dia_froz
+ enddo
+ 
+ return
+diff -Naur mw_scatt_coef_121/load_arts_ssp.F90 mw_scatt_coef_new/load_arts_ssp.F90
+--- mw_scatt_coef_121/load_arts_ssp.F90	1970-01-01 01:00:00.000000000 +0100
++++ mw_scatt_coef_new/load_arts_ssp.F90	2017-10-31 22:36:31.000000000 +0100
+@@ -0,0 +1,102 @@
++subroutine load_arts_ssp (m_type, i_scat, particle_shape, &
++                          ssp_arts, f_arts, T_arts, D_arts)
++
++! Copyright:
++!
++!    Copyright 2017, Chalmers University of Technology/EUMETSAT, All Rights Reserved.
++
++! History:
++! Version   Date        Comment
++! -------   ----        -------
++!           31/10/2017  initial version (Jana Mendrok)
++
++use parkind1, only: jprb, jpim
++use mod_mie, only:  i_arts, lmax
++use mod_arts
++
++implicit none
++
++integer (kind=jpim), intent (in) :: m_type
++integer (kind=jpim), intent (in) :: i_scat(m_type), particle_shape(m_type)
++real (kind=jprb), intent (inout) :: ssp_arts(nf_max_arts, nT_max_arts, nD_max_arts,4,m_type)
++real (kind=jprb), intent (inout) :: f_arts(0:nf_max_arts), T_arts(0:nT_max_arts), D_arts(0:nD_max_arts)
++
++! Local variables
++integer (kind=jpim) :: nf, nT, nD, fi, Ti, Di, i_type, ios, fid=16
++character(len=lmax) :: line
++character(len=*), parameter :: err_base = 'Aborting due to problem in ARTS SSP database: '
++
++!FIXME:
++! - check that grids are strictly monotone.
++
++
++do i_type=1,m_type
++  ! only in case ARTS-SSP data is used for this hydormeteor, we read the ARTS-SSP data from an rssp habit file
++  if (i_scat(i_type) == i_arts) then
++    open(unit=fid, status = 'old', iostat=ios, &
++         file = trim(arts_folder)//trim(arts_files(particle_shape(i_type))) )
++    if (ios /= 0) then
++      write(0,*) err_base
++      write(0,*) 'Scattering file not found: '//trim(arts_folder)//trim(arts_files(particle_shape(i_type)))
++      stop
++    endif
++    
++    ! parse file
++    read(fid, *, iostat=ios) line ! comment line
++    read(fid, *, iostat=ios) nf, nT, nD
++    if (nf>nf_max_arts) then
++      write(0,*) err_base
++      write(0,*) 'Number of frequencies of m_type(', i_type, ') (nf=', nf, &
++                 ') exceeds allowed maximum number of frequencies', &
++                 ' in ARTS-SSP data (nf_max=', nf_max_arts, ').'
++      stop
++    endif
++    f_arts(0) = REAL(nf)
++    if (nT>nT_max_arts) then
++      write(0,*) err_base
++      write(0,*) 'Number of temperature of m_type(', i_type, ') (nT=', nf, &
++                 ') exceeds allowed maximum number of temperatures', &
++                 ' in ARTS-SSP data (nT_max=', nT_max_arts, ').'
++      stop
++    endif
++    T_arts(0) = REAL(nT)
++    if (nD>nD_max_arts) then
++      write(0,*) err_base
++      write(0,*) 'Number of particle sizes of m_type(', i_type, ') (nD=', nD, &
++                 ') exceeds allowed maximum number of particle sizes', &
++                 ' in ARTS-SSP data (nD_max=', nD_max_arts, ').'
++      stop
++    endif
++    D_arts(0) = REAL(nD)
++    read(fid, *, iostat=ios) line ! comment line
++    read(fid, *, iostat=ios) f_arts(1:)
++    read(fid, *, iostat=ios) line ! comment line
++    read(fid, *, iostat=ios) T_arts(1:)
++    read(fid, *, iostat=ios) line ! comment line
++    read(fid, *, iostat=ios) D_arts(1:)
++    ! for some reason, the read-in of the D causes a linefeed.
++    ! so, don't linefeed once more to skip that comment, as we have that skipped implicitly already.
++    !read(fid, *, iostat=ios) line ! comment line
++    read(fid, *, iostat=ios) line ! Dveq grid. Replace by reading into a REAL array when needed.
++    read(fid, *, iostat=ios) line ! comment line
++    read(fid, *, iostat=ios) line ! mass grid. Replace by reading into a REAL array when needed.
++    read(fid, *, iostat=ios) line ! comment line
++    read(fid, *, iostat=ios) line ! m-D's a and b. Replace by reading into REAL scalars when needed.
++    read(fid, *, iostat=ios) line ! comment line
++    do fi=1,nf
++      do Ti=1,nT
++        do Di=1,nD
++          read(fid, *, iostat=ios) ssp_arts(fi,Ti,Di,:,i_type)
++        enddo
++      enddo
++    enddo
++    !fi=1
++    !Ti=1
++    !do Di=1,nD-1
++    !  write(*,*) 'loaded ext(fi=',fi,',Ti=',Ti,'Di=',Di+1,')=',ssp_arts(fi,Ti,Di+1,1,1)
++    !enddo
++
++  end if
++enddo
++
++end subroutine load_arts_ssp
+diff -Naur mw_scatt_coef_121/mie_one_temp.F90 mw_scatt_coef_new/mie_one_temp.F90
+--- mw_scatt_coef_121/mie_one_temp.F90	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/mie_one_temp.F90	2017-11-06 09:05:36.558349539 +0100
+@@ -1,5 +1,6 @@
+-subroutine mie_one_temp ( temp, wavelength, f_ghz, i_type, dens, &
+-  & psd, regime, ll_melt, ll_dsd, liu_habit, is_loaded, &
++subroutine mie_one_temp ( temp, wavelength, f_ghz, i_type, i_scat, dens, &
++  & psd, regime, ll_melt, ll_dsd, particle_habit, is_loaded, &
++  & ssp_arts, f_arts, T_arts, D_arts, &
+   & ext_tab, ssa_tab, asm_tab, zef_tab)
+ 
+ !    This software was developed within the context of
+@@ -19,15 +20,17 @@
+ !        wavelength -                   [cm]
+ !        f_ghz      - frequency         [GHz]
+ !        i_type     - hydrometeor type (see mod_mie.F90)   
++!        i_scat     - scattering computation type (see mod_mie.F90)
+ !        ll_melt    - do melting layer of Bauer (2001) 
+ !        dens       - density parametrization 
+ !        psd        - PSD parametrization 
+ !        regime     - Field et al. (2007) PSD regime
+ !        ll_melt
+ !        ll_dsd     - Panegrossi et al. n0 vs T
+-!        liu_habit  - habit for Liu (2008) DDA shapes
++!        particle_shape  - shape ID for Liu (2008) or ARTS-SSDB habits etc.
+ !        is_loaded  - used by Liu DDA tables
+ !                     development work. Too slow for operational use.
++!        ssp_arts   - combined SSP from ARTS database for this i_type
+ !
+ !    OUT: ext_tab   - Bulk extinction               [km^-1]
+ !         ssa_tab   - Bulk single scattering albedo [ ]
+@@ -42,24 +45,28 @@
+ ! -------   ----        -------
+ !           10/03/2010  Basic routine for parallelisation (Alan Geer)
+ !           13/03/2013  Fully-flexible PSD, density and shape (Alan Geer)
++!           31/10/2017  Adapted for ARTS-SSDB use (Jana Mendrok)
+ 
+ use parkind1, only: jprb, jpim
+ use mod_mie, only: n_lwc
+ !INTF_OFF
+-use mod_mie, only: n_dia, get_lwc, cm2km, i_totalice
++use mod_mie, only: n_dia, get_lwc, cm2km, i_totalice, i_mie
+ !INTF_ON
++use mod_arts, only: nf_max_arts, nT_max_arts, nD_max_arts
+ 
+ implicit none
+ 
+ real (kind=jprb),    intent(in   ) :: temp, wavelength, f_ghz
+-integer (kind=jpim), intent(in   ) :: i_type, liu_habit, dens, psd
++integer (kind=jpim), intent(in   ) :: i_type, i_scat, particle_habit, dens, psd
+ logical,             intent(in   ) :: ll_melt, ll_dsd
+ character,           intent(in   ) :: regime
+ integer (kind=jpim), intent(inout) :: is_loaded
++real (kind=jprb),    intent(in   ) :: ssp_arts(nf_max_arts, nT_max_arts, nD_max_arts,4)
++real (kind=jprb),    intent(in   ) :: f_arts(0:nf_max_arts), T_arts(0:nT_max_arts), D_arts(0:nD_max_arts) 
+ real (kind=jprb),    intent(  out) :: ext_tab(n_lwc), ssa_tab(n_lwc), asm_tab(n_lwc), zef_tab(n_lwc)
+ !INTF_END
+ 
+-logical :: ll_liu_dda, ll_variable_d
++logical :: ll_variable_d
+ integer (kind=jpim) :: i_lwc!, i_habit
+ real (kind=jprb), dimension (n_dia) :: q_ext, q_sct, q_asm, q_bsct, nd, dia_froz
+ real (kind=jprb)                    :: ext, sct, asm, bsct, lwc
+@@ -70,8 +77,7 @@
+ #include "set_spectra.interface"
+ #include "mie_one_wc.interface"
+ 
+-ll_liu_dda    = liu_habit >= 0
+-ll_variable_d = i_type == i_totalice .and. .not. ll_liu_dda
++ll_variable_d = i_type == i_totalice .and. i_scat == i_mie
+ 
+ ext_tab = 0.0
+ ssa_tab = 0.0
+@@ -81,11 +87,13 @@
+ if( .not. ll_variable_d ) then  
+ 
+   ! Diameter range
+-  call get_dia( dia_froz, i_type, ll_liu_dda, liu_habit)
++  call get_dia( dia_froz, i_type, i_scat, particle_habit)
+ 
+   ! Compute scattering parameters as a function of diameter. 
+   call scattering( dia_froz, temp, wavelength, f_ghz, i_type, dens, &
+-    & ll_liu_dda, liu_habit, is_loaded, q_ext, q_sct, q_asm, q_bsct)
++    & i_scat, particle_habit, is_loaded, &
++    & ssp_arts, f_arts(0), T_arts(0), D_arts(0), &
++    & q_ext, q_sct, q_asm, q_bsct)
+ 
+ endif
+ 
+@@ -95,13 +103,15 @@
+ 
+   ! Get size distribution for this LWC 
+   call set_spectra (i_type, lwc, temp, f_ghz, dia_froz, nd, psd, ll_dsd, dens, regime, &
+-    & ll_liu_dda, liu_habit, ll_variable_d)
++    & i_scat, particle_habit, ll_variable_d)
+ 
+   if( ll_variable_d ) then  
+ 
+     ! Totalice diameters change according to the lwc, so must recalculate Mie each time - much slower...
+     call scattering( dia_froz, temp, wavelength, f_ghz, i_type, dens, &
+-      & ll_liu_dda, liu_habit, is_loaded, q_ext, q_sct, q_asm, q_bsct)
++      & i_scat, particle_habit, is_loaded, &
++      & ssp_arts, f_arts(0), T_arts(0), D_arts(0), &
++      & q_ext, q_sct, q_asm, q_bsct)
+ 
+   endif
+ 
+diff -Naur mw_scatt_coef_121/mod_arts.F90 mw_scatt_coef_new/mod_arts.F90
+--- mw_scatt_coef_121/mod_arts.F90	1970-01-01 01:00:00.000000000 +0100
++++ mw_scatt_coef_new/mod_arts.F90	2017-12-04 22:43:38.000000000 +0100
+@@ -0,0 +1,140 @@
++module mod_arts
++
++! Copyright:
++!
++!    Copyright 2017, Chalmers University of Technology/EUMETSAT, All Rights Reserved.
++
++! Any habit from the ARTS SSP database needs to be registered here.
++! That is, this module needs to be updated whenever new habits are added
++! or existing ones modified.
++! The order of entries in all per-habit data arrays below has to be
++! identical.
++
++! History:
++! Version   Date        Comment
++! -------   ----        -------
++!           31/10/2017  initial version (Jana Mendrok)
++
++use parkind1,  only: jprb, jpim, jplm
++use mod_mie, only: lmax ! add whatever is needed
++
++implicit none
++
++
++!* base location of the RTTOV-SSP files from the ARTS SPP database
++character(len=lmax) :: arts_folder = 'rssp/'
++
++!* total number of registered ARTS habits
++integer (kind=jpim), parameter :: n_arts_habits = 16
++
++!* maximum (allowed) f, T, D dimensions from ARTS-SSDB data
++integer (kind=jpim), parameter :: nf_max_arts = 34
++integer (kind=jpim), parameter :: nT_max_arts =  5
++integer (kind=jpim), parameter :: nD_max_arts = 55
++
++!* maximum (allowed) extrapolation factors in f, T, D from ARTS-SSDB data
++real (kind=jprb), parameter :: f_extpol = 0.5
++real (kind=jprb), parameter :: T_extpol = 0.5
++real (kind=jprb), parameter :: D_extpol = 1e-6    ! basically 0., but we need a little
++                                                  ! bit due to number representation issues
++
++!* filenames of the habits
++character(len=33), dimension (n_arts_habits) :: arts_files = (/ &       ! ID
++  'PlateType1.rssp                  ', &                                !  1
++  'ColumnType1.rssp                 ', &                                !  2
++  '6-BulletRosette.rssp             ', &                                !  3
++  'Perpendicular4-BulletRosette.rssp', &                                !  4
++  'Flat3-BulletRosette.rssp         ', &                                !  5
++  'IconCloudIce.rssp                ', &                                !  6
++  'SectorSnowflake.rssp             ', &                                !  7
++  'EvansSnowAggregate.rssp          ', &                                !  8
++  '8-ColumnAggregate.rssp           ', &                                !  9
++  'LargePlateAggregate.rssp         ', &                                ! 10
++  'LargeColumnAggregate.rssp        ', &                                ! 11
++  'LargeBlockAggregate.rssp         ', &                                ! 12
++  'IconSnow.rssp                    ', &                                ! 13
++  'IconHail.rssp                    ', &                                ! 14
++  'GemGraupel.rssp                  ', &                                ! 15
++  'LiquidSphere.rssp                '  &                                ! 16
++  /)
++
++
++!* Min / max diameters of the habits (Dmax [m])
++real (kind=jprb), dimension (n_arts_habits) :: d_arts_min = (/ &
++  1.315073e-05, &    !  1
++  1.440998e-05, &    !  2
++  1.556235e-05, &    !  3
++  1.795143e-05, &    !  4
++  1.987506e-05, &    !  5
++  1.286199e-05, &    !  6
++  2.000000e-05, &    !  7
++  3.200000e-05, &    !  8
++  1.942867e-05, &    !  9
++  1.622964e-05, &    ! 10
++  2.417353e-05, &    ! 11
++  1.316186e-05, &    ! 12
++  1.651748e-05, &    ! 13
++  1.029416e-05, &    ! 14
++  1.942867e-05, &    ! 15
++  1.242944e-06  &    ! 16
++  /)
++real (kind=jprb), dimension (n_arts_habits) :: d_arts_max = (/ &
++  1.000003e-02, &    !  1
++  1.000000e-02, &    !  2
++  1.000005e-02, &    !  3
++  1.000003e-02, &    !  4
++  1.000005e-02, &    !  5
++  1.000003e-02, &    !  6
++  1.023801e-02, &    !  7
++  1.175533e-02, &    !  8
++  9.714335e-03, &    !  9
++  2.285975e-02, &    ! 10
++  1.998066e-02, &    ! 11
++  2.187592e-02, &    ! 12
++  1.999972e-02, &    ! 13
++  5.349094e-03, &    ! 14
++  6.596726e-03, &    ! 15
++  5.000000e-02  &    ! 16
++  /)
++
++
++!* Alpha and beta of mass-dimension relationship (m=a*Dmax^b) (for m [kg] and Dmax [m])
++real (kind=jprb), dimension (n_arts_habits) :: alpha_arts = (/ &
++  7.570440e-01, &    !  1
++  3.796800e-02, &    !  2
++  4.927320e-01, &    !  3
++  3.248390e-01, &    !  4
++  2.433350e-01, &    !  5
++  1.590000e+00, &    !  6
++  8.222560e-04, &    !  7
++  1.963050e-01, &    !  8
++  6.544800e+01, &    !  9
++  2.085010e-01, &    ! 10
++  2.758260e-01, &    ! 11
++  3.499490e-01, &    ! 12
++  3.114040e-02, &    ! 13
++  3.835060e+02, &    ! 14
++  1.727530e+02, &    ! 15
++  5.235990e+02  &    ! 16
++  /)
++real (kind=jprb), dimension (n_arts_habits) :: beta_arts = (/ &
++  2.477030e+00, &    !  1
++  2.051090e+00, &    !  2
++  2.427790e+00, &    !  3
++  2.425930e+00, &    !  4
++  2.425730e+00, &    !  5
++  2.560000e+00, &    !  6
++  1.444640e+00, &    !  7
++  2.386110e+00, &    !  8
++  3.000000e+00, &    !  9
++  2.257080e+00, &    ! 10
++  2.444020e+00, &    ! 11
++  2.265690e+00, &    ! 12
++  1.948600e+00, &    ! 13
++  2.994190e+00, &    ! 14
++  2.964610e+00, &    ! 15
++  3.000000e+00  &    ! 16
++  /)
++
++
++end module mod_arts
+diff -Naur mw_scatt_coef_121/mod_mie.F90 mw_scatt_coef_new/mod_mie.F90
+--- mw_scatt_coef_121/mod_mie.F90	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/mod_mie.F90	2017-10-31 22:37:38.000000000 +0100
+@@ -22,8 +22,10 @@
+ !           12/03/2010   restructuring (Alan Geer)
+ !           03/03/2011   New snow options + cleaning (Alan Geer)
+ !           15/03/2013   Fully-flexible PSD, shape & density options (Alan Geer)
++!           01/04/2014   Flexible single-scattering database inputs (Alan Geer)
++!           31/10/2017  Adapted for ARTS-SSDB use (Jana Mendrok)
+ 
+-use parkind1,  only: jprb, jpim
++use parkind1,  only: jprb, jpim, jplm
+ 
+ implicit none
+ 
+@@ -117,6 +119,12 @@
+ & 'cloud-ice  ',&
+ & 'total_ice  '/)
+ 
++! Scattering computation types
++integer (kind=jpim), parameter :: n_scat   = 3
++integer (kind=jpim), parameter :: i_mie    = 1
++integer (kind=jpim), parameter :: i_liu    = 2
++integer (kind=jpim), parameter :: i_arts   = 3
++
+ !* Density, min/max diameters (cm)
+ real (kind=jprb), dimension (n_type) :: density_liq = (/ 1.00,   0.1,    0.40,   0.90,   1.0,    0.9,    0.5    /)
+ real (kind=jprb), dimension (n_type) :: d_min       = (/ 0.01,   0.01,   0.05,   0.50,   0.0005, 0.0005, 0.0005 /)
+diff -Naur mw_scatt_coef_121/predict_psd_F07.F90 mw_scatt_coef_new/predict_psd_F07.F90
+--- mw_scatt_coef_121/predict_psd_F07.F90	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/predict_psd_F07.F90	2017-10-31 22:40:14.000000000 +0100
+@@ -1,4 +1,4 @@
+-subroutine predict_psd_F07(i_type,iwc,tk,f_ghz,Dcm,nd,mass,dens,regime,ll_liu_dda,liu_habit,ll_variable_d)
++subroutine predict_psd_F07(i_type,iwc,tk,f_ghz,Dcm,nd,mass,dens,regime,i_scat,particle_habit,ll_variable_d)
+ 
+ ! Description:
+ !   Subroutine copied from Paul fields pvwave code compute_psd.pro
+@@ -35,6 +35,7 @@
+ !           02/03/2011  use with Liu particle habits (Alan Geer)
+ !           12/05/2011  Corrected density parameters. Andrew Smith
+ !           15/03/2013  Fully-flexible PSD, density and shape (Alan Geer)
++!           31/10/2017  Adapted for ARTS-SSDB use (Jana Mendrok)
+ !
+ ! Code Description: 
+ !   Language:           Fortran 90. 
+@@ -53,8 +54,8 @@
+ real     (kind=jprb), intent(in) :: iwc     ! IWC (g/m^3)
+ real     (kind=jprb), intent(in) :: tk      ! Temperature (K)
+ integer  (kind=jpim), intent(in) :: dens    ! Density id (1 or 3)
+-integer  (kind=jpim), intent(in) :: liu_habit
+-logical,              intent(in) :: ll_liu_dda
++integer  (kind=jpim), intent(in) :: particle_habit
++integer  (kind=jpim), intent(in) :: i_scat
+ character,            intent(in) :: regime  ! ('T' Tropical, 'M' mid-latitude)
+ real    (kind=jprb), intent ( in) :: f_ghz  ! Frequency, [GHz]
+ logical (kind=jplm), intent ( in) :: ll_variable_d
+@@ -79,7 +80,7 @@
+ !-------------------------------------------------------------------------------
+ 
+ ! Set refactor and exponent x, y in mass-size relation m=xD^y
+-call density_all(i_type, ll_liu_dda, liu_habit, dens, f_ghz, a=x, b=y)
++call density_all(i_type, i_scat, particle_habit, dens, f_ghz, a=x, b=y)
+ 
+ if (x == not_available) then
+   write(*,*) 'Invalid density treatment selected for use with Field PSD'
+@@ -193,7 +194,7 @@
+   !;;scale universal psd;;;;;
+   dN_dD(i)=phi(i)*m2**4/m3**3 !psd m^-4
+ 
+-  ! Overwrite size ranges (will stay the same in case of ll_liu_dda)
++  ! Overwrite size ranges (will stay the same in case of i_scat)
+   Dcm(i)=1e2_jprb*xx(i)*(m3/m2) !particle sizes in cm to match rest of code
+ 
+ enddo
+diff -Naur mw_scatt_coef_121/predict_psd.F90 mw_scatt_coef_new/predict_psd.F90
+--- mw_scatt_coef_121/predict_psd.F90	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/predict_psd.F90	2017-10-31 22:39:34.000000000 +0100
+@@ -1,4 +1,4 @@
+-subroutine predict_psd(i_type,iwc,tk,Dcm,nd,mass,dens,f_ghz,ll_liu_dda,liu_habit,ll_variable_d)
++subroutine predict_psd(i_type,iwc,tk,Dcm,nd,mass,dens,f_ghz,i_scat,particle_habit,ll_variable_d)
+ 
+ ! Description:
+ !   Subroutine copied from Paul fields pvwave code compute_psd.pro
+@@ -33,6 +33,7 @@
+ !           02/03/2011  normalise (Alan Geer)
+ !           12/05/2011  Corrected density parameters. Andrew Smith
+ !           13/03/2013  Fully-flexible PSD, density and shape (Alan Geer)
++!           31/10/2017  Adapted for ARTS-SSDB use (Jana Mendrok)
+ !
+ ! Code Description: 
+ !   Language:           Fortran 90. 
+@@ -56,8 +57,8 @@
+ real (kind=jprb), intent(out) :: nd(n_dia)     ! Size distribution
+ real (kind=jprb), intent(out) :: mass(n_dia)
+ 
+-integer  (kind=jpim), intent(in) :: liu_habit
+-logical,              intent(in) :: ll_liu_dda
++integer  (kind=jpim), intent(in) :: particle_habit
++integer  (kind=jpim), intent(in) :: i_scat
+ real    (kind=jprb), intent ( in) :: f_ghz  ! Frequency, [GHz]
+ logical (kind=jplm), intent ( in) :: ll_variable_d
+ 
+@@ -80,7 +81,7 @@
+ !-------------------------------------------------------------------------------
+ 
+ ! Set refactor and exponent x, y in mass-size relation m=xD^y
+-call density_all(i_type, ll_liu_dda, liu_habit, dens, f_ghz, a=x, b=y)
++call density_all(i_type, i_scat, particle_habit, dens, f_ghz, a=x, b=y)
+ 
+ if (x == not_available) then
+   write(*,*) 'Invalid density treatment selected for use with Field (2005) PSD'
+diff -Naur mw_scatt_coef_121/rttov_scatt_make_coef.F90 mw_scatt_coef_new/rttov_scatt_make_coef.F90
+--- mw_scatt_coef_121/rttov_scatt_make_coef.F90	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/rttov_scatt_make_coef.F90	2017-10-31 22:45:16.000000000 +0100
+@@ -44,6 +44,7 @@
+ !   1.3     12/03/2010   Optimisation and restructuring (Alan Geer)
+ !   1.4     02/03/2011   More of the above + extra choices for snow (Alan Geer)
+ !   1.5     15/03/2013   Fully-flexible PSD, shape and density options (Alan Geer)
++!   ?.?     31/10/2017   Adapted for ARTS-SSDB use (Jana Mendrok)
+ 
+ !**************************************************************************
+ 
+@@ -51,8 +52,9 @@
+ 
+ ! use mod_mie, only: n_temp, n_type, n_lwc, n_dia, pi, &
+ !                    temp_offset, lmax, i_snow
+-use mod_mie, only: n_temp, n_type, n_lwc, pi, &
++use mod_mie, only: n_temp, n_type, n_lwc, pi, i_liu, i_arts, &
+                    temp_offset, lmax
++use mod_arts, only: nf_max_arts, nT_max_arts, nD_max_arts
+ 
+ implicit none
+ 
+@@ -66,7 +68,7 @@
+ integer (kind=jpim) :: n_freq, n_sensor
+ integer (kind=jpim) :: is_loaded
+ complex (kind=jprb) :: k, perm_wat
+-logical (kind=jplm) :: ll_melt, ll_dsd!, ll_liu_dda
++logical (kind=jplm) :: ll_melt, ll_dsd
+ 
+ character(len=lmax) :: line
+ character(len=lmax) :: output_dir
+@@ -74,13 +76,16 @@
+ character(len=lmax) :: input_file
+ 
+ integer (kind=jpim) :: m_type 
+-integer (kind=jpim), allocatable, dimension (:) :: id_type 
++integer (kind=jpim), allocatable, dimension (:) :: id_type, i_scat
+ character, allocatable, dimension (:) :: regime
+-integer (kind=jpim), allocatable, dimension (:) :: dens, psd, liu_habit
++integer (kind=jpim), allocatable, dimension (:) :: dens, psd, particle_shape
+ 
+ real (kind=jprb), dimension (:,:,:,:), allocatable :: ext_tab, ssa_tab, asm_tab, zef_tab
+ real (kind=jprb), dimension (:), allocatable, save :: ext_wc, ssa_wc, asm_wc, zef_wc
+ 
++real (kind=jprb), dimension (:,:,:,:,:), allocatable :: ssp_arts
++real (kind=jprb), dimension (:), allocatable :: f_arts, T_arts, D_arts
++
+ #ifndef RTTOV_NAG53
+ !$OMP THREADPRIVATE(ext_wc, ssa_wc, asm_wc, zef_wc)
+ #endif
+@@ -90,6 +95,7 @@
+ #include "mie_one_temp.interface"
+ #include "perm_water.interface"
+ #include "liu_dda.interface"
++!#include "load_arts_ssp.interface"
+ 
+ !-------------------------------------------------------------------------------
+ 
+@@ -124,7 +130,8 @@
+ read (10,*) n_sensor
+ read (10,*) m_type
+ allocate(id_type(m_type))
+-allocate(liu_habit(m_type))
++allocate(i_scat(m_type))
++allocate(particle_shape(m_type))
+ allocate(dens(m_type))
+ allocate(psd(m_type))
+ allocate(regime(m_type))
+@@ -135,7 +142,9 @@
+ read (10,*) ll_dsd
+ read (10,*) 
+ read (10,*) 
+-read (10,*) liu_habit
++read (10,*) i_scat
++read (10,*)
++read (10,*) particle_shape
+ read (10,*)
+ read (10,*) 
+ read (10,*) 
+@@ -154,7 +163,8 @@
+ print '(a,l1)', ' Melting layer = ', ll_melt
+ print '(a,l1)', ' Parameterized n0 = ', ll_dsd
+ print '(a,12(i0,1x))', ' Hydrometeor IDs = ', id_type
+-print '(a,12(i0,1x))', ' Liu habits = ', liu_habit
++print '(a,12(i0,1x))', ' Scattering computation = ', i_scat
++print '(a,12(i0,1x))', ' Particle shapes = ', particle_shape
+ print '(a,12(i0,1x))', ' Density scheme = ', dens
+ print '(a,12(i0,1x))', ' PSD = ', psd
+ print '(a,12(a1,1x))', ' PSD Regime = ', regime
+@@ -201,9 +211,28 @@
+ is_loaded = 0_jpim
+ 
+ ! Force Liu DDA parameters to be read into memory (not threadsafe, so should not be done later)
+-if ( any(liu_habit >= 0) ) then
++if (any(i_scat == i_liu)) then
+   call liu_dda(100.0_jprb, 250.0_jprb, 0_jpim, 1e-3_jprb, tq_ext, tq_sct, tq_asm, tq_bsct, is_loaded)
+-end if
++endif
++
++! Load SSP from ARTS SSP database habit files
++! For the moment we read all data of all habits used at once and store them in a
++! "big" array.
++! Up to ECMWF to make that smarter in future.
++allocate(f_arts(0:nf_max_arts))
++allocate(T_arts(0:nT_max_arts))
++allocate(D_arts(0:nD_max_arts))
++if (any(i_scat == i_arts)) then
++  allocate(ssp_arts(nf_max_arts,nT_max_arts,nD_max_arts,4,m_type))
++  ssp_arts = -1.
++  f_arts = -1.
++  T_arts = -1.
++  D_arts = -1.
++  call load_arts_ssp( m_type, i_scat, particle_shape, &
++                      ssp_arts, f_arts(0), T_arts(0), D_arts(0) )
++else
++  allocate(ssp_arts(nf_max_arts,nT_max_arts,nD_max_arts,0,m_type))
++endif
+ 
+ ! Loop (1) over frequencies
+ 
+@@ -258,8 +287,10 @@
+         temp = temp_offset(i_type) + i_temp
+ 
+         ! Compute scattering parameters for this temperature, hydrometeor type and frequency
+-        call mie_one_temp (temp, wavelength, f_ghz, i_type, dens(i_mtype), psd(i_mtype), regime(i_mtype), &
+-          & ll_melt, ll_dsd, liu_habit(i_mtype), is_loaded, &
++        call mie_one_temp (temp, wavelength, f_ghz, i_type, i_scat(i_mtype), &
++          & dens(i_mtype), psd(i_mtype), regime(i_mtype), &
++          & ll_melt, ll_dsd, particle_shape(i_mtype), is_loaded, &
++          & ssp_arts(:,:,:,:,i_mtype), f_arts(0), T_arts(0), D_arts(0), &
+           & ext_wc, ssa_wc, asm_wc, zef_wc)
+ 
+         ssa_tab(i_freq,i_mtype,i_temp,:) = ssa_tab(i_freq,i_mtype,i_temp,:) + ssa_wc
+@@ -295,7 +326,7 @@
+ 
+ call convert_mietable(input_file, ext_tab, ssa_tab, asm_tab)
+ 
+-deallocate(asm_tab, ssa_tab, ext_tab, zef_tab, id_type, liu_habit, psd, dens, regime)
++deallocate(asm_tab, ssa_tab, ext_tab, zef_tab, id_type, i_scat, particle_shape, psd, dens, regime)
+ 
+ #ifndef RTTOV_NAG53
+ !$OMP PARALLEL DEFAULT(SHARED)
+diff -Naur mw_scatt_coef_121/scattering.F90 mw_scatt_coef_new/scattering.F90
+--- mw_scatt_coef_121/scattering.F90	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/scattering.F90	2017-11-06 09:08:41.846065986 +0100
+@@ -1,5 +1,7 @@
+ subroutine scattering ( dia_froz, temp, wavelength, f_ghz, i_type, dens, &
+-  & ll_liu_dda, liu_habit, is_loaded, q_ext, q_sct, q_asm, q_bsct)
++  & i_scat, particle_habit, is_loaded, &
++  & ssp_arts, f_arts, T_arts, D_arts, &
++  & q_ext, q_sct, q_asm, q_bsct)
+ 
+ !    This software was developed within the context of
+ !    the EUMETSAT Satellite Application Facility on
+@@ -21,8 +23,8 @@
+ !        f_ghz      - frequency   [GHz]
+ !        i_type     - hydrometeor type (see mod_mie.F90)   
+ !        dens       - density parametrization (totalice only)
+-!        ll_liu_dda - use Liu (2008) DDA results 
+-!        liu_habit  - habit for above, as defined in Liu (2008)
++!        i_scat     - number indicates source of scattering data (Mie, Liu (2008), ARTS-SSDB)
++!        particle_habit  - habit for above, as defined in Liu (2008) or mod_arts.F90
+ !        is_loaded  - used by liu stuff
+ !       
+ !    OUT: q_ext  - Extinction cross-section [cm^2]
+@@ -38,21 +40,25 @@
+ ! -------   ----        -------
+ !           02/03/2010  New function (Alan Geer)
+ !           15/03/2013  Fully-flexible PSD, density & shape options (Alan Geer)
++!           31/10/2017  Adapted for ARTS-SSDB use (Jana Mendrok)
+ 
+ use parkind1, only: jprb, jpim
+ use mod_mie,  only: n_dia
+ !INTF_OFF
+-use mod_mie,  only: pi
++use mod_mie,  only: pi, i_mie, i_liu, i_arts
+ !INTF_ON
++use mod_arts, only: nf_max_arts, nT_max_arts, nD_max_arts
+ 
+ implicit none
+ 
+ ! Interface
+ real (kind=jprb),    intent (in   ) :: temp, wavelength, f_ghz, dia_froz(n_dia)
+-integer (kind=jpim), intent (in   ) :: i_type, dens, liu_habit
++integer (kind=jpim), intent (in   ) :: i_type, dens, particle_habit
+ integer (kind=jpim), intent (inout) :: is_loaded
+-logical,             intent (in   ) :: ll_liu_dda
++integer (kind=jpim), intent (in   ) :: i_scat
+ real (kind=jprb),    intent (  out) :: q_ext(n_dia), q_sct(n_dia), q_asm(n_dia), q_bsct(n_dia)
++real (kind=jprb),    intent (in   ) :: ssp_arts(nf_max_arts, nT_max_arts, nD_max_arts,4)
++real (kind=jprb),    intent (in   ) :: f_arts(0:nf_max_arts), T_arts(0:nT_max_arts), D_arts(0:nD_max_arts)
+ !INTF_END
+ 
+ ! Local variables
+@@ -66,15 +72,16 @@
+ #include "mie_sphere.interface"
+ #include "liu_dda.interface"
+ #include "density_all.interface"
++!#include "arts_scat.interface"
+ 
+ real (kind=jprb) :: Dinmeters
+ 
+-call density_all(i_type, .false., -1_jpim, dens, f_ghz, &
++call density_all(i_type, i_mie, -1_jpim, dens, f_ghz, &
+   & dinmeters=dia_froz/100.0_jprb, density=density)
+ 
+ do i_dia = 1, n_dia       
+ 
+-  if (.not. ll_liu_dda ) then
++  if (i_scat == i_mie ) then
+ 
+     ! Normal Mie sphere approach
+     perm = permittivity(i_type, f_ghz, temp, density(i_dia)) 
+@@ -89,15 +96,23 @@
+     q_ext(i_dia)  = q_ext(i_dia) * itgr
+     q_bsct(i_dia) = q_bsct(i_dia) * itgr
+ 
+-  else
++  elseif (i_scat == i_liu) then
+ 
+     ! Use Liu (2008) DDA approximations for snow scattering parameters
+     Dinmeters = dia_froz(i_dia)/100.0_jprb
+-    call liu_dda(f_ghz, temp, liu_habit, Dinmeters, q_ext(i_dia), q_sct(i_dia), q_asm(i_dia), q_bsct(i_dia), is_loaded)
++    call liu_dda(f_ghz, temp, particle_habit, Dinmeters, q_ext(i_dia), q_sct(i_dia), q_asm(i_dia), q_bsct(i_dia), is_loaded)
++
++  elseif (i_scat == i_arts) then
++
++    ! Use ARTS SSP database
++    Dinmeters = dia_froz(i_dia)/100.0_jprb
++    call arts_scat(f_ghz, temp, Dinmeters, &
++                   ssp_arts, f_arts(0), T_arts(0), D_arts(0), &
++                   q_ext(i_dia), q_sct(i_dia), q_asm(i_dia), q_bsct(i_dia))
+ 
+   endif
+ 
+-end do 
++end do
+ 
+ return
+ end subroutine scattering
+diff -Naur mw_scatt_coef_121/set_spectra.F90 mw_scatt_coef_new/set_spectra.F90
+--- mw_scatt_coef_121/set_spectra.F90	2017-02-16 13:00:33.000000000 +0100
++++ mw_scatt_coef_new/set_spectra.F90	2017-11-06 09:10:01.791677319 +0100
+@@ -1,5 +1,5 @@
+ subroutine set_spectra (i_type, lwc, temp, f_ghz, dia_froz, nd, psd, ll_dsd, dens, regime, &
+-  & ll_liu_dda, liu_habit, ll_variable_d)
++  & i_scat, particle_habit, ll_variable_d)
+ 
+ ! Description:
+ !
+@@ -23,8 +23,8 @@
+ !       psd        - PSD parametrization
+ !       regime     - Field et al. (2007) PSD regime
+ !       ll_dsd     - Panegrossi et al. n0 vs T
+-!       ll_liu_dda - use Liu (2008) DDA results 
+-!       liu_habit  - habit for above, as defined in Liu (2008)
++!       i_scat     - scattering computation type (see mod_mie.F90)
++!       particle_habit - shape ID for Liu (2008) or ARTS-SSDB (for the latter see mod_arts.F90)
+ !         
+ !   OUT: nd        - size distribution [cm^-4]
+ !
+@@ -48,6 +48,7 @@
+ !           12/03/2010  Put all size distributions here (Alan Geer)
+ !           09/02/2011  Simplify normalisation. Documentation. (Alan Geer)
+ !           15/03/2013  Fully-flexible PSD, density and shape options (Alan Geer)
++!           31/10/2017  Adapted for ARTS-SSDB use (Jana Mendrok)
+ 
+ use parkind1, only: jprb, jpim, jplm
+ use mod_mie,  only: n_dia
+@@ -65,8 +66,8 @@
+ !* common variables
+ real (kind=jprb),    intent ( in)   :: lwc, temp, f_ghz
+ real (kind=jprb),    intent (inout) :: dia_froz(n_dia)
+-integer (kind=jpim), intent ( in)   :: psd, dens, liu_habit, i_type
+-logical (kind=jplm), intent ( in)   :: ll_dsd, ll_liu_dda, ll_variable_d
++integer (kind=jpim), intent ( in)   :: psd, dens, particle_habit, i_type, i_scat
++logical (kind=jplm), intent ( in)   :: ll_dsd, ll_variable_d
+ character,           intent ( in)   :: regime
+ real (kind=jprb),    intent (out)   :: nd(n_dia) 
+ 
+@@ -88,16 +89,16 @@
+ if (psd == psd_field_2005 ) then
+ 
+   call predict_psd(i_type, lwc, temp, dia_froz, nd, mass, dens, f_ghz, &
+-    & ll_liu_dda, liu_habit, ll_variable_d)
++    & i_scat, particle_habit, ll_variable_d)
+ 
+ else if (psd == psd_field_2007) then
+ 
+   call predict_psd_F07(i_type, lwc, temp, f_ghz, dia_froz, nd, mass, dens, regime, &
+-    & ll_liu_dda, liu_habit, ll_variable_d)
++    & i_scat, particle_habit, ll_variable_d)
+ 
+ else
+ 
+-  call density_all(i_type, ll_liu_dda, liu_habit, dens, f_ghz, &
++  call density_all(i_type, i_scat, particle_habit, dens, f_ghz, &
+     & dinmeters=dia_froz/100.0_JPRB, density=by_dia_density, a=a, b=b, &
+     & gamma1plusb=gamma1plusb)
+ 
