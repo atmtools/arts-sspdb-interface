@@ -14,13 +14,10 @@ except ImportError:
   raise Exception( 'Module *scipy.interpolate* required but not found.' )
 
 try:
-  import typhon.arts.scattering as tas
-  #import typhon.arts.xml as tax
-  use_typhon = True
+  import pyarts.arts as pa
+  use_pyarts = True
 except ImportError:
-  #from . import typhontools as tt
-  use_typhon = False
-  #raise Exception( 'Non-typhon *SingleScatteringData* not yet implemented' )
+  use_pyarts = False
 
 try:
   from . import utils
@@ -43,17 +40,17 @@ except Exception as e:
 
 # ARTS ptype definitions
 a_ptype = {
-  20: "totally_random",
-  30: "azimuthally_random",
+  100: "PTYPE_TOTAL_RND",
+  200: "PTYPE_AZIMUTH_RND",
   }
 # inverted ARTS ptype dict
 ai_ptype = dict(zip(a_ptype.values(),a_ptype.keys()))
 
 # SSP-DB ptype definitions (in case ARTS and SSP deviate in future)
 db_ptype = {
-  "totally_random": 20,
-  "azimuthally_random": 30,
-  "random": 20, # as in order instance of SSP-DB
+  "totally_random": 100,
+  "azimuthally_random": 200,
+  "random": 100, # as in order instance of SSP-DB
   }
 
 
@@ -214,8 +211,8 @@ def ssdb2assp(SSD, freq, temp, nodata,interpm='linear'):
   # Set M
   #  (here from the first element in SSD; later we check that the crucial meta
   #   data is consistent between all SSD)
-  if use_typhon:
-    M = tas.ScatteringMetaData()
+  if use_pyarts:
+    M = pa.ScatteringMetaData()
     if (SSD.size>0):
       M.description         = 'Meta data for '+SSD[0,0]['ShapeData']['description']
       M.source              = SSD[0,0]['ShapeData']['source']
@@ -232,20 +229,20 @@ def ssdb2assp(SSD, freq, temp, nodata,interpm='linear'):
       assert( (len(SSD[0,0]['ShapeData']['diameter_area_eq_aerodynamical']['dim'])==0) and
               (SSD[0,0]['ShapeData']['diameter_area_eq_aerodynamical']['data'].size==1) ), \
         'Aerodyn. area equ. diameter data has wrong dimensions.'
-      M.mass                = np.float(SSD[0,0]['ShapeData']['mass']['data'])
-      M.diameter_max        = np.float(SSD[0,0]['ShapeData']['diameter_max']['data'])
-      M.diameter_volume_equ = np.float(SSD[0,0]['ShapeData']['diameter_vol_eq']['data'])
+      M.mass                = float(SSD[0,0]['ShapeData']['mass']['data'])
+      M.diameter_max        = float(SSD[0,0]['ShapeData']['diameter_max']['data'])
+      M.diameter_volume_equ = float(SSD[0,0]['ShapeData']['diameter_vol_eq']['data'])
       M.diameter_area_equ_aerodynamical \
-                            = np.float(SSD[0,0]['ShapeData']['diameter_area_eq_aerodynamical']['data'])
+                            = float(SSD[0,0]['ShapeData']['diameter_area_eq_aerodynamical']['data'])
   else:
-    raise Exception( 'Non-typhon *ScatteringMetaData* not yet implemented.' )
+    raise Exception( 'Non-pyarts *ScatteringMetaData* not yet implemented.' )
 
   phase = SSD[0,0]['ShapeData']['phase']
 
   # Basic data of S
-  if use_typhon:
-    S = tas.SingleScatteringData()
-    S.version     = 3
+  if use_pyarts:
+    S = pa.SingleScatteringData()
+    # S.version     = 3
     if (SSD.size>0):
       try:
         ptypeID = db_ptype[SSD[0,0]['SingleScatteringData']['orient_type']]
@@ -253,7 +250,7 @@ def ssdb2assp(SSD, freq, temp, nodata,interpm='linear'):
         raise Exception( \
           "Database ptype '%s' is unknown." %SSD[0,0]['SingleScatteringData']['orient_type'] )
       try:
-        S.ptype       = a_ptype[ptypeID]
+        S.ptype = pa.PType(ptypeID)
       except KeyError:
         raise Exception( \
           "No ARTS ptype equivalent defined for database ptype '%s' (internal ID=%i)." \
@@ -262,7 +259,7 @@ def ssdb2assp(SSD, freq, temp, nodata,interpm='linear'):
       S.f_grid  = freq
       S.T_grid  = temp
   else:
-    raise Exception( 'Non-typhon *SingleScatteringData* not yet implemented' )
+    raise Exception( 'Non-pyarts *SingleScatteringData* not yet implemented' )
 
   # Fill S according to ptype
   nf = freq.size
@@ -273,7 +270,7 @@ def ssdb2assp(SSD, freq, temp, nodata,interpm='linear'):
     #####
     # totally random orientation
     #####
-    if ( S.ptype==a_ptype[20] ):
+    if ( S.ptype==100 ):
 
       pha_inds = [ [1,2,0,0], [2,3,0,0], [0,0,4,-5], [0,0,5,6] ]
 
@@ -311,7 +308,7 @@ def ssdb2assp(SSD, freq, temp, nodata,interpm='linear'):
               raise Exception( \
                 "No ARTS ptype equivalent defined for database ptype '%s' (internal ID=%i) for SSD at f=%.1fGHz and T=%.1fK." \
                 %(SSD[f,t]['SingleScatteringData']['orient_type'],ptypeID,freq[f]*1e-9,temp[t]) )
-            assert( S.ptype==ptypeName ), \
+            assert( S.ptype.name==ptypeName ), \
               'ptype for SSD at f=%.1fGHz and T=%.1fK inconsistent with initial value.' \
               %(freq[f]*1e-9,temp[t])
 
@@ -341,14 +338,6 @@ def ssdb2assp(SSD, freq, temp, nodata,interpm='linear'):
       for f in np.arange(freq.size):
         for t in np.arange(temp.size):
           if (not nodata[f,t]):
-            # Fill data fields
-
-            # Old, linear za-interpolation only version:
-            #for i in np.arange(S.pha_mat_data.shape[-1]):
-            #  S.pha_mat_data[f,t,:,0,0,0,i] = \
-            #    np.interp( S.za_grid,
-            #              SSD[f,t]['SingleScatteringData']['za_scat']['data'],
-            #              SSD[f,t]['SingleScatteringData']['phaMat_data']['data'][i,0,0,0,:] )
 
             # selectable za-interpolation method:
             if (interpm=='pchip'):
@@ -376,7 +365,7 @@ def ssdb2assp(SSD, freq, temp, nodata,interpm='linear'):
     #####
     # azimuthally random orientation
     #####
-    elif ( S.ptype==a_ptype[30] ):
+    elif ( S.ptype==200 ):
       #####
       # Separate according to phase: liquid (gridded data) vs ice (spherical harmonics)
       #####
@@ -393,7 +382,7 @@ def ssdb2assp(SSD, freq, temp, nodata,interpm='linear'):
           except Exception as e:
              print('Module *assp* requires module *sph*, but failed to import it:\n%s' %str(e))
 
-          S.za_grid=SSD[0,0]['SingleScatteringData']['za_inc']['data']
+          S.za_grid=np.float64(SSD[0,0]['SingleScatteringData']['za_inc']['data'])
 
           for f in np.arange(freq.size):
             for t in np.arange(temp.size):
@@ -421,7 +410,7 @@ def ssdb2assp(SSD, freq, temp, nodata,interpm='linear'):
                   raise Exception( \
                     "No ARTS ptype equivalent defined for database ptype '%s' (internal ID=%i) for SSD at f=%.1fGHz and T=%.1fK." \
                     %(SSD[f,t]['SingleScatteringData']['orient_type'],ptypeID,freq[f]*1e-9,temp[t]) )
-                assert( S.ptype==ptypeName ), \
+                assert( S.ptype.name==ptypeName ), \
                   'ptype for SSD at f=%.1fGHz and T=%.1fK inconsistent with initial value.' \
                   %(freq[f]*1e-9,temp[t])
 
@@ -1210,9 +1199,9 @@ def assp_interp_size(S,M,new_size_grid=None,size_type='dveq',interpm='pchip',
           'za_grid': flatS[0].za_grid,
           'aa_grid': flatS[0].aa_grid,
           }
-  if use_typhon:
-    s = tas.SingleScatteringData.from_data(params=defs)
-    m = tas.ScatteringMetaData()
+  if use_pyarts:
+    s = pa.SingleScatteringData.from_data(params=defs)
+    m = pa.ScatteringMetaData()
     m.version = flatM[0].version
     m.description = flatM[0].description
     m.source = flatM[0].source
@@ -1422,7 +1411,7 @@ def assp_bulkprops(S, M, size_unit, psd, *args):
     Bulk scattering properties, in the format of SingleScatteringData.
   """
   # for simplicity, we convert S and M to numpy arrays.
-  if not use_typhon:
+  if not use_pyarts:
     raise Exception( \
       'Non-typhon handling of *SingleScatteringData* and *ScatteringMetaData* not (yet?) implemented.' )
 
@@ -1437,10 +1426,10 @@ def assp_bulkprops(S, M, size_unit, psd, *args):
     raise Exception( \
       'This function handles so far only totally random orientation data.' )
   if ( len(s.shape)>1 or
-       not all([isinstance(i,tas.SingleScatteringData) for i in s]) ):
+       not all([isinstance(i,pa.SingleScatteringData) for i in s]) ):
     raise Exception( 'S must be a 1D list or array of *SingleScatteringData*.' )
   if ( len(m.shape)>1 or
-       not all([isinstance(i,tas.ScatteringMetaData) for i in m]) ):
+       not all([isinstance(i,pa.ScatteringMetaData) for i in m]) ):
     raise Exception( 'M must be a 1D list or array of *ScatteringMetaData*.' )
   if ( s.size != m.size ):
     raise Exception( 'S and M must have the same length.' )
@@ -1573,8 +1562,8 @@ def flatappend_from_recursive_S(S,flat,attname,count):
   '''
   Note: *flat* can be initialised as numpy array or list.
   '''
-  if use_typhon:
-    if (isinstance(S,tas.SingleScatteringData)):
+  if use_pyarts:
+    if (isinstance(S,pa.SingleScatteringData)):
       flat = np.append(flat, getattr(S,attname))
       count += 1
       return flat, count
@@ -1598,9 +1587,9 @@ def shallowappend_from_recursive_S(S,shallow,attname,instancetype='SSD'):
       'Output shallow list needs to be initialized as list (but is not).' )
   if not( instancetype in ['SSD','SMD'] ):
     raise Exception( "Wrong instancetype. Can only handle 'SSD' and 'SMD'." )
-  if use_typhon:
-    if ( (instancetype=='SSD' and isinstance(S,tas.SingleScatteringData)) or
-         (instancetype=='SMD' and isinstance(S,tas.ScatteringMetaData)) ):
+  if use_pyarts:
+    if ( (instancetype=='SSD' and isinstance(S,pa.SingleScatteringData)) or
+         (instancetype=='SMD' and isinstance(S,pa.ScatteringMetaData)) ):
       if (attname=='ALL'):
         shallow.append(S)
       else:
