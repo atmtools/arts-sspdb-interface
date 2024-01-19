@@ -40,7 +40,7 @@ class Spharmt(object):
         """initialize
         nlons:  number of longitudes
         nlats:  number of latitudes"""
-        self._shtns = shtns.sht(ntrunc, ntrunc, 1, \
+        self._shtns = shtns.sht(ntrunc, ntrunc, 1, 
                                 shtns.sht_orthonormal+shtns.SHT_NO_CS_PHASE)     
         if gridtype == 'gaussian':
             self._shtns.set_grid(nlats, nlons,
@@ -55,7 +55,7 @@ class Spharmt(object):
         self.ntrunc = ntrunc
         self.nlm = self._shtns.nlm
         self.degree = self._shtns.l
-        self.lap = -self.degree*(self.degree+1.0).astype(np.complex)
+        self.lap = -self.degree*(self.degree+1.0).astype(np.complex128)
         self.invlap = np.zeros(self.lap.shape, self.lap.dtype)
         self.invlap[1:] = 1./self.lap[1:]
         self.rsphere = rsphere
@@ -77,7 +77,7 @@ class Spharmt(object):
         return self.lap*self.rsphere*vrtspec, self.lap*self.rsphere*divspec
     def getgrad(self, divspec):
         """compute gradient vector from spectral coeffs"""
-        vrtspec = np.zeros(divspec.shape, dtype=np.complex)
+        vrtspec = np.zeros(divspec.shape, dtype=np.complex128)
         u,v = self._shtns.synth(vrtspec,divspec)
         return u/self.rsphere, v/self.rsphere
     def zrotate(self, dataspec, alpha):

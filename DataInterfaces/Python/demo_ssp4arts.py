@@ -95,7 +95,7 @@ except Exception as e:
         '  %s%\n' %str(e))
 
 try:
-  import typhon.arts.xml as tax
+  import pyarts.xml as pax
 except ImportError:
   raise Exception(\
     'This script requires the typhon package. Retry after installing.')
@@ -143,18 +143,18 @@ filename = '%s/%s_%s' %(outpath,sdBase,sdSize)
 if (sdSize=='dmax'):
   for i in range(len(S)):
     psize = M[i].diameter_max*1e6
-    tax.save(S[i],'%s%04.0fum.%s' %(filename,psize,sdExt),format=fmt)
-    tax.save(M[i],'%s%04.0fum.meta.%s' %(filename,psize,sdExt), format=fmt)
+    pax.save(S[i],'%s%04.0fum.%s' %(filename,psize,sdExt),format=fmt)
+    pax.save(M[i],'%s%04.0fum.meta.%s' %(filename,psize,sdExt), format=fmt)
 elif (sdSize=='dveq'):
   for i in range(len(S)):
     psize = M[i].diameter_volume_equ*1e6
-    tax.save(S[i],'%s%04.0fum.%s' %(filename,psize,sdExt),format=fmt)
-    tax.save(M[i],'%s%04.0fum.meta.%s' %(filename,psize,sdExt), format=fmt)
+    pax.save(S[i],'%s%04.0fum.%s' %(filename,psize,sdExt),format=fmt)
+    pax.save(M[i],'%s%04.0fum.meta.%s' %(filename,psize,sdExt), format=fmt)
 elif (sdSize=='mass'):
   for i in range(len(S)):
     psize = M[i].mass
-    tax.save(S[i],'%s%.2ekg.%s' %(filename,psize,sdExt),format=fmt)
-    tax.save(M[i],'%s%.2ekg.meta.%s' %(filename,psize,sdExt), format=fmt)
+    pax.save(S[i],'%s%.2ekg.%s' %(filename,psize,sdExt),format=fmt)
+    pax.save(M[i],'%s%.2ekg.meta.%s' %(filename,psize,sdExt), format=fmt)
 else:
   raise Exception(\
     "Size description parameter '%s' is unknown. Only 'dmax','dveq','mass' allowed." %sdSize)

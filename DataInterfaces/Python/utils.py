@@ -73,8 +73,8 @@ def ssdb_read_ncfile(nc_file, freq_range=None, temp_range=None, bool_onlyFolders
   def get_internalStruct(dataSet, freq_rang, temp_range, bool_onlyFolders): 
     folders = []
     for grp_key in dataSet.groups.keys():
-      freq = 1e9*np.float(grp_key.partition('Freq')[-1].partition('GHz')[0])
-      temp= np.float(grp_key.partition('T')[-1].partition('K')[0]) 
+      freq = 1e9*np.float64(grp_key.partition('Freq')[-1].partition('GHz')[0])
+      temp= np.float64(grp_key.partition('T')[-1].partition('K')[0]) 
       if (freq<freq_range[0]) or (freq>freq_range[1]):
         continue
       if (temp<temp_range[0]) or (temp>temp_range[1]):
@@ -176,9 +176,9 @@ def ssdb_data_files(data_folder):
   mass = np.zeros(n)
   for i,x in enumerate(ihit):
     data_file.append(os.path.join(data_folder,x))
-    dmax[i] = round_sig(1e-6*np.float(x.partition('Dmax')[-1].partition('um')[0]),10)
-    dveq[i] = round_sig(1e-6*np.float(x.partition('Dveq')[-1].partition('um')[0]),10)
-    mass[i] = round_sig(np.float(x.partition('Mass')[-1].partition('kg')[0]),10)
+    dmax[i] = round_sig(1e-6*np.float64(x.partition('Dmax')[-1].partition('um')[0]),10)
+    dveq[i] = round_sig(1e-6*np.float64(x.partition('Dveq')[-1].partition('um')[0]),10)
+    mass[i] = round_sig(np.float64(x.partition('Mass')[-1].partition('kg')[0]),10)
 
   return data_file,dmax,dveq,mass
 
@@ -428,7 +428,7 @@ def ssdb_display(habit_id=None, orientation=None, dveq=None):
                     if names4.shape[0]>0:
                         print( '  %s' %names3[i3] )
                     for i4 in np.arange(names4.shape[0]):
-                        habit_id = np.int(names4[i4].partition('_Id')[-1])
+                        habit_id = int(names4[i4].partition('_Id')[-1])
                         S        = ssdb_summary( habit_id, printinfo=False )
                         try:
                           if S['STATUS']=='WORKING':
@@ -784,7 +784,7 @@ def ssdb_particle_folders( habit_folder ):
     elif ( 'AzimuthallyRandom' in x ):
       y = x.replace('AzimuthallyRandom', 'azimuthally_random') 
       orientations.append(y)
-      tilt_angles.append(np.float(x.partition('beta')[-1].partition('deg')[0]))
+      tilt_angles.append(np.float64(x.partition('beta')[-1].partition('deg')[0]))
     else:
       raise Exception( 'Folder %s not recognized as an orientation folder' %x )
   
@@ -1324,7 +1324,7 @@ def round_sig(x, sig=1):
   y: number (as x)
     x rounded to sig significant digits.
   """
-  return np.round(x,sig-np.int(np.floor(np.log10(abs(x))))-1)
+  return np.round(x,sig-int(np.floor(np.log10(abs(x))))-1)
 
 
 #def myfunc(A):
